@@ -784,9 +784,6 @@ static void uv__stream_connect(uv_stream_t* stream) {
   if (error == EINPROGRESS)
     return;
 
-  if (error == 0)
-    uv__io_start(stream->loop, &stream->read_watcher);
-
   stream->connect_req = NULL;
   uv__req_unregister(stream->loop, req);
 
@@ -794,76 +791,6 @@ static void uv__stream_connect(uv_stream_t* stream) {
     uv__set_sys_error(stream->loop, error);
     req->cb(req, error ? -1 : 0);
   }
-}
-
-
-int uv__connect(uv_connect_t* req, uv_stream_t* stream, struct sockaddr* addr,
-    socklen_t addrlen, uv_connect_cb cb) {
-  int sockfd;
-  int r;
-
-  if (stream->fd <= 0) {
-    if ((sockfd = uv__socket(addr->sa_family, SOCK_STREAM, 0)) == -1) {
-      uv__set_sys_error(stream->loop, errno);
-      return -1;
-    }
-
-    if (uv__stream_open(stream,
-                        sockfd,
-                        UV_STREAM_READABLE | UV_STREAM_WRITABLE)) {
-      close(sockfd);
-      return -2;
-    }
-  }
-
-  uv__req_init(stream->loop, req, UV_CONNECT);
-  req->cb = cb;
-  req->handle = stream;
-  ngx_queue_init(&req->queue);
-
-  if (stream->connect_req) {
-    uv__set_sys_error(stream->loop, EALREADY);
-    return -1;
-  }
-
-  if (stream->type != UV_TCP) {
-    uv__set_sys_error(stream->loop, ENOTSOCK);
-    return -1;
-  }
-
-  stream->connect_req = req;
-
-  do {
-    r = connect(stream->fd, addr, addrlen);
-  }
-  while (r == -1 && errno == EINTR);
-
-  stream->delayed_error = 0;
-
-  if (r != 0 && errno != EINPROGRESS) {
-    switch (errno) {
-      /* If we get a ECONNREFUSED wait until the next tick to report the
-       * error. Solaris wants to report immediately--other unixes want to
-       * wait.
-       *
-       * XXX: do the same for ECONNABORTED?
-       */
-      case ECONNREFUSED:
-        stream->delayed_error = errno;
-        break;
-
-      default:
-        uv__set_sys_error(stream->loop, errno);
-        return -1;
-    }
-  }
-
-  uv__io_start(stream->loop, &stream->write_watcher);
-
-  if (stream->delayed_error)
-    uv__io_feed(stream->loop, &stream->write_watcher, UV__IO_WRITE);
-
-  return 0;
 }
 
 

@@ -109,6 +109,10 @@ void uv_close(uv_handle_t* handle, uv_close_cb close_cb) {
     uv__poll_close((uv_poll_t*)handle);
     break;
 
+  case UV_FS_POLL:
+    uv__fs_poll_close((uv_fs_poll_t*)handle);
+    break;
+
   default:
     assert(0);
   }
@@ -133,6 +137,9 @@ static void uv__finish_close(uv_handle_t* handle) {
     case UV_ASYNC:
     case UV_TIMER:
     case UV_PROCESS:
+    case UV_FS_EVENT:
+    case UV_FS_POLL:
+    case UV_POLL:
       break;
 
     case UV_NAMED_PIPE:
@@ -146,12 +153,6 @@ static void uv__finish_close(uv_handle_t* handle) {
 
     case UV_UDP:
       uv__udp_finish_close((uv_udp_t*)handle);
-      break;
-
-    case UV_FS_EVENT:
-      break;
-
-    case UV_POLL:
       break;
 
     default:
@@ -227,7 +228,7 @@ void uv_loop_delete(uv_loop_t* loop) {
 
 
 static unsigned int uv__poll_timeout(uv_loop_t* loop) {
-  if (!uv__has_active_handles(loop))
+  if (!uv__has_active_handles(loop) && !uv__has_active_reqs(loop))
     return 0;
 
   if (!ngx_queue_empty(&loop->idle_handles))
@@ -425,6 +426,11 @@ int uv__accept(int sockfd) {
 
   while (1) {
 #if __linux__
+    static int no_accept4;
+
+    if (no_accept4)
+      goto skip;
+
     peerfd = uv__accept4(sockfd,
                          NULL,
                          NULL,
@@ -438,6 +444,9 @@ int uv__accept(int sockfd) {
 
     if (errno != ENOSYS)
       break;
+
+    no_accept4 = 1;
+skip:
 #endif
 
     peerfd = accept(sockfd, NULL, NULL);

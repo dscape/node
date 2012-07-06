@@ -50,6 +50,7 @@
         'include/uv-private/ngx-queue.h',
         'include/uv-private/tree.h',
         'src/cares.c',
+        'src/fs-poll.c',
         'src/uv-common.c',
         'src/uv-common.h',
         'src/ares/ares_cancel.c',
@@ -232,7 +233,7 @@
         [ 'OS=="linux"', {
           'include_dirs': [ 'src/ares/config_linux' ],
           'sources': [
-            'src/unix/linux/core.c',
+            'src/unix/linux/linux-core.c',
             'src/unix/linux/inotify.c',
             'src/unix/linux/syscalls.c',
             'src/unix/linux/syscalls.h',
@@ -339,6 +340,7 @@
         'test/test-shutdown-close.c',
         'test/test-shutdown-eof.c',
         'test/test-spawn.c',
+        'test/test-fs-poll.c',
         'test/test-stdio-over-pipes.c',
         'test/test-tcp-bind-error.c',
         'test/test-tcp-bind6-error.c',
@@ -353,6 +355,7 @@
         'test/test-tcp-write-error.c',
         'test/test-tcp-write-to-half-open-connection.c',
         'test/test-tcp-writealot.c',
+        'test/test-tcp-unexpected-read.c',
         'test/test-threadpool.c',
         'test/test-mutexes.c',
         'test/test-thread.c',
@@ -402,6 +405,7 @@
       'dependencies': [ 'uv' ],
       'sources': [
         'test/benchmark-ares.c',
+        'test/benchmark-fs-stat.c',
         'test/benchmark-getaddrinfo.c',
         'test/benchmark-list.h',
         'test/benchmark-loop-count.c',

@@ -297,7 +297,14 @@ Handle<Value> SecureContext::SetKey(const Arguments& args) {
 
   if (!key) {
     BIO_free(bio);
-    return False();
+    unsigned long err = ERR_get_error();
+    if (!err) {
+      return ThrowException(Exception::Error(
+          String::New("PEM_read_bio_PrivateKey")));
+    }
+    char string[120];
+    ERR_error_string_n(err, string, sizeof string);
+    return ThrowException(Exception::Error(String::New(string)));
   }
 
   SSL_CTX_use_PrivateKey(sc->ctx_, key);
@@ -3958,6 +3965,15 @@ class DiffieHellman : public ObjectWrap {
     BN_free(key);
 
     Local<Value> outString;
+
+    // DH_size returns number of bytes in a prime number
+    // DH_compute_key returns number of bytes in a remainder of exponent, which
+    // may have less bytes than a prime number. Therefore add 0-padding to the
+    // allocated buffer.
+    if (size != dataSize) {
+      assert(dataSize > size);
+      memset(data + size, 0, dataSize - size);
+    }
 
     if (size == -1) {
       int checkResult;
