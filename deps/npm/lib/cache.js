@@ -54,6 +54,8 @@ exports = module.exports = cache
 exports.read = read
 exports.clean = clean
 exports.unpack = unpack
+exports.lock = lock
+exports.unlock = unlock
 
 var mkdir = require("mkdirp")
   , exec = require("./utils/exec.js")
@@ -65,7 +67,6 @@ var mkdir = require("mkdirp")
   , registry = npm.registry
   , log = require("npmlog")
   , path = require("path")
-  , output
   , sha = require("./utils/sha.js")
   , asyncMap = require("slide").asyncMap
   , semver = require("semver")
@@ -143,7 +144,6 @@ function read (name, ver, forceBypass, cb) {
 
 // npm cache ls [<path>]
 function ls (args, cb) {
-  output = output || require("./utils/output.js")
   args = args.join("/").split("@").join("/")
   if (args.substr(-1) === "/") args = args.substr(0, args.length - 1)
   var prefix = npm.config.get("cache")
@@ -151,11 +151,10 @@ function ls (args, cb) {
     prefix = "~" + prefix.substr(process.env.HOME.length)
   }
   ls_(args, npm.config.get("depth"), function(er, files) {
-    output.write(files.map(function (f) {
+    console.log(files.map(function (f) {
       return path.join(prefix, f)
-    }).join("\n").trim(), function (er) {
-      return cb(er, files)
-    })
+    }).join("\n").trim())
+    cb(er, files)
   })
 }
 
@@ -384,7 +383,7 @@ function addRemoteGit (u, parsed, name, cb_) {
     var tmp = path.join(npm.tmp, Date.now()+"-"+Math.random())
     mkdir(path.dirname(tmp), function (er) {
       if (er) return cb(er)
-      exec( npm.config.get("git"), ["clone", u, tmp], null, false
+      exec( npm.config.get("git"), ["clone", u, tmp], gitEnv(), false
           , function (er, code, stdout, stderr) {
         stdout = (stdout + "\n" + stderr).trim()
         if (er) {
@@ -392,7 +391,7 @@ function addRemoteGit (u, parsed, name, cb_) {
           return cb(er)
         }
         log.verbose("git clone "+u, stdout)
-        exec( npm.config.get("git"), ["checkout", co], null, false, tmp
+        exec( npm.config.get("git"), ["checkout", co], gitEnv(), false, tmp
             , function (er, code, stdout, stderr) {
           stdout = (stdout + "\n" + stderr).trim()
           if (er) {
@@ -405,6 +404,20 @@ function addRemoteGit (u, parsed, name, cb_) {
       })
     })
   })
+}
+
+
+var gitEnv_
+function gitEnv () {
+  // git responds to env vars in some weird ways in post-receive hooks
+  // so don't carry those along.
+  if (gitEnv_) return gitEnv_
+  gitEnv_ = {}
+  for (var k in process.env) {
+    if (!~['GIT_PROXY_COMMAND'].indexOf(k) && k.match(/^GIT/)) continue
+    gitEnv_[k] = process.env[k]
+  }
+  return gitEnv_
 }
 
 
@@ -504,19 +517,6 @@ function addNameRange (name, range, data, cb) {
              , {name:name, range:range, hasData:!!data})
     engineFilter(data)
 
-    if (npm.config.get("registry")) return next_()
-
-    cachedFilter(data, range, function (er) {
-      if (er) return cb(er)
-      if (Object.keys(data.versions).length === 0) {
-        return cb(new Error( "Can't fetch, and not cached: "
-                           + data.name + "@" + range))
-      }
-      next_()
-    })
-  }
-
-  function next_ () {
     log.silly("addNameRange", "versions"
              , [data.name, Object.keys(data.versions || {})])
 
@@ -536,39 +536,6 @@ function addNameRange (name, range, data, cb) {
     // there's a cached copy that will be ok.
     addNamed(name, ms, data.versions[ms], cb)
   }
-}
-
-// filter the versions down based on what's already in cache.
-function cachedFilter (data, range, cb) {
-  log.silly("cachedFilter", data.name)
-  ls_(data.name, 1, function (er, files) {
-    if (er) {
-      log.error("cachedFilter", "Not in cache, can't fetch", data.name)
-      return cb(er)
-    }
-    files = files.map(function (f) {
-      return path.basename(f.replace(/(\\|\/)$/, ""))
-    }).filter(function (f) {
-      return semver.valid(f) && semver.satisfies(f, range)
-    })
-
-    if (files.length === 0) {
-      return cb(new Error("Not in cache, can't fetch: "+data.name+"@"+range))
-    }
-
-    log.silly("cached", [data.name, files])
-    Object.keys(data.versions).forEach(function (v) {
-      if (files.indexOf(v) === -1) delete data.versions[v]
-    })
-
-    if (Object.keys(data.versions).length === 0) {
-      log.error("cachedFilter", "Not in cache, can't fetch", data.name)
-      return cb(new Error("Not in cache, can't fetch: "+data.name+"@"+range))
-    }
-
-    log.silly("filtered", [data.name, Object.keys(data.versions)])
-    cb(null, data)
-  })
 }
 
 function installTargetsError (requested, data) {
@@ -788,11 +755,24 @@ function addPlacedTarball_ (p, name, uid, gid, cb) {
   var target = path.dirname(p)
     , folder = path.join(target, "package")
 
-  rm(folder, function (er) {
-    if (er) {
-      log.error("addPlacedTarball", "Could not remove %j", folder)
-      return cb(er)
-    }
+  lock(folder, function (er) {
+    if (er) return cb(er)
+    rmUnpack()
+  })
+
+  function rmUnpack () {
+    rm(folder, function (er) {
+      unlock(folder, function () {
+        if (er) {
+          log.error("addPlacedTarball", "Could not remove %j", folder)
+          return cb(er)
+        }
+        thenUnpack()
+      })
+    })
+  }
+
+  function thenUnpack () {
     tar.unpack(p, folder, null, null, uid, gid, function (er) {
       if (er) {
         log.error("addPlacedTarball", "Could not unpack %j to %j", p, target)
@@ -837,7 +817,7 @@ function addPlacedTarball_ (p, name, uid, gid, cb) {
         })
       })
     })
-  })
+  }
 }
 
 function addLocalDirectory (p, name, cb) {
@@ -934,8 +914,11 @@ function deprCheck (data) {
 }
 
 function lockFileName (u) {
-  var c = u.replace(/[^a-zA-Z0-9]+/g, '-')
+  var c = u.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, "")
     , h = crypto.createHash("sha1").update(u).digest("hex")
+  h = h.substr(0, 8)
+  c = c.substr(-32)
+  log.silly("lockFile", h + "-" + c, u)
   return path.resolve(npm.config.get("cache"), h + "-" + c + ".lock")
 }
 

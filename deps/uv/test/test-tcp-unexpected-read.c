@@ -49,6 +49,8 @@ static void timer_cb(uv_timer_t* handle, int status) {
 
 static uv_buf_t alloc_cb(uv_handle_t* handle, size_t suggested_size) {
   ASSERT(0 && "alloc_cb should not have been called");
+  /* Satisfy the compiler. */
+  return uv_buf_init(NULL, 0);
 }
 
 
@@ -105,7 +107,7 @@ TEST_IMPL(tcp_unexpected_read) {
    * start busy looping when the server sends a message and the client isn't
    * reading.
    */
-  ASSERT(ticks <= 10);
+  ASSERT(ticks <= 20);
 
   return 0;
 }
